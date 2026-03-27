@@ -1,0 +1,9 @@
+[
+  {
+    "label": "Run server",
+    "command": "go run ./cmd/main.go",
+    "args": [],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "use_new_terminal": false,
+  }
+]

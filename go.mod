@@ -3,6 +3,7 @@ module plugin-platform
 go 1.25.5
 
 require (
+	github.com/BurntSushi/toml v1.6.0
 	github.com/capyflow/allspark-go v0.0.0-20260326153727-35758ec31b3e
 	github.com/capyflow/vortexv3 v0.0.0-20260317140202-f00534f1f33f
 	github.com/redis/go-redis/v9 v9.18.0

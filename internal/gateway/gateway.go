@@ -40,27 +40,28 @@ func (g *Gateway) Start(ctx context.Context, port int) error {
 }
 
 // registerRoutes 注册路由
+// 注意：路由按注册顺序匹配，所以 /list 必须在 /:id 之前注册
 func (g *Gateway) registerRoutes(root *vhttp.VortexHttpRouterGroup) {
-	// 插件管理
+	// 插件管理 - 按特异性排序（最具体的路由先注册）
 	pluginGroup := root.AddGroup("/plugins")
 
-	// 注册插件
-	pluginGroup.AddRouter([]string{http.MethodPost}, "/register", g.handleRegister)
-
-	// 注销插件
-	pluginGroup.AddRouter([]string{http.MethodDelete}, "/:id", g.handleUnregister)
-
-	// 获取插件列表
+	// 1. 获取插件列表（最具体，无路径参数）
 	pluginGroup.AddRouter([]string{http.MethodGet}, "/list", g.handleList)
 
-	// 获取插件详情
-	pluginGroup.AddRouter([]string{http.MethodGet}, "/:id", g.handleGet)
+	// 2. 注册插件
+	pluginGroup.AddRouter([]string{http.MethodPost}, "/register", g.handleRegister)
 
-	// 执行插件方法
+	// 3. 执行插件方法（二级路径）
 	pluginGroup.AddRouter([]string{http.MethodPost}, "/:id/execute/:method", g.handleExecute)
 
-	// 健康检查
+	// 4. 健康检查（二级路径）
 	pluginGroup.AddRouter([]string{http.MethodGet}, "/:id/health", g.handleHealth)
+
+	// 5. 获取插件详情（一级路径参数）
+	pluginGroup.AddRouter([]string{http.MethodGet}, "/:id", g.handleGet)
+
+	// 6. 注销插件（一级路径参数）
+	pluginGroup.AddRouter([]string{http.MethodDelete}, "/:id", g.handleUnregister)
 }
 
 // handleRegister 处理注册请求

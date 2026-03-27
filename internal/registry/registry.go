@@ -4,78 +4,91 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"plugin-platform/pkg/models"
 
 	"github.com/capyflow/allspark-go/logx"
 	"github.com/redis/go-redis/v9"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 const (
-	CollectionName = "plugins"
-	RedisKeyPrefix = "plugin:"
+	KeyPluginPrefix    = "plugin:id:"
+	KeyPluginName      = "plugin:name:"
+	KeyPluginList      = "plugin:list"
+	KeyHealthFailCount = "plugin:health_fail:"
+	MaxHealthFailures  = 3
 )
 
-// Registry 插件注册表
+// Registry 插件注册表（纯 Redis 实现）
 type Registry struct {
-	mongo   *mongo.Database
-	redis   *redis.Client
+	redis *redis.Client
 }
 
 // New 创建注册表
-func New(mongoDB *mongo.Database, redisClient *redis.Client) *Registry {
+func New(redisClient *redis.Client) *Registry {
 	return &Registry{
-		mongo: mongoDB,
 		redis: redisClient,
 	}
 }
 
 // Register 注册插件
 func (r *Registry) Register(ctx context.Context, plugin *models.Plugin) error {
-	// 检查是否已存在
+	now := time.Now()
+
+	// 检查是否已存在同名插件
 	existing, err := r.GetByName(ctx, plugin.Name)
 	if err != nil {
 		return err
 	}
 
-	now := time.Now()
 	if existing != nil {
 		// 更新现有插件
 		plugin.ID = existing.ID
 		plugin.CreatedAt = existing.CreatedAt
-		plugin.UpdatedAt = now
-		
-		filter := bson.M{"_id": plugin.ID}
-		update := bson.M{"$set": plugin}
-		
-		_, err := r.mongo.Collection(CollectionName).UpdateOne(ctx, filter, update)
-		if err != nil {
-			return fmt.Errorf("failed to update plugin: %v", err)
-		}
-		
-		logx.Infof("Plugin updated: %s@%s", plugin.Name, plugin.Version)
 	} else {
 		// 创建新插件
-		plugin.ID = fmt.Sprintf("plugin-%d", time.Now().UnixNano())
+		plugin.ID = fmt.Sprintf("plugin-%d", now.UnixNano())
 		plugin.CreatedAt = now
-		plugin.UpdatedAt = now
-		plugin.Status = models.PluginStatusActive
-		
-		_, err := r.mongo.Collection(CollectionName).InsertOne(ctx, plugin)
-		if err != nil {
-			return fmt.Errorf("failed to create plugin: %v", err)
-		}
-		
-		logx.Infof("Plugin registered: %s@%s", plugin.Name, plugin.Version)
 	}
 
-	// 缓存到 Redis
-	if err := r.cachePlugin(ctx, plugin); err != nil {
-		logx.Warnf("Failed to cache plugin: %v", err)
+	plugin.UpdatedAt = now
+	plugin.Status = models.PluginStatusActive
+	plugin.Health = models.PluginHealth{
+		Status:    "healthy",
+		Latency:   0,
+		CheckedAt: now,
+	}
+
+	// 保存到 Redis
+	data, err := json.Marshal(plugin)
+	if err != nil {
+		return fmt.Errorf("failed to marshal plugin: %v", err)
+	}
+
+	// 保存插件数据
+	if err := r.redis.Set(ctx, KeyPluginPrefix+plugin.ID, data, 0).Err(); err != nil {
+		return fmt.Errorf("failed to save plugin: %v", err)
+	}
+
+	// 保存名称到 ID 的映射
+	if err := r.redis.Set(ctx, KeyPluginName+plugin.Name, plugin.ID, 0).Err(); err != nil {
+		return fmt.Errorf("failed to save plugin name mapping: %v", err)
+	}
+
+	// 添加到插件列表
+	if err := r.redis.SAdd(ctx, KeyPluginList, plugin.ID).Err(); err != nil {
+		return fmt.Errorf("failed to add plugin to list: %v", err)
+	}
+
+	// 重置健康失败计数
+	r.redis.Del(ctx, KeyHealthFailCount+plugin.ID)
+
+	if existing != nil {
+		logx.Infof("Plugin updated: %s@%s", plugin.Name, plugin.Version)
+	} else {
+		logx.Infof("Plugin registered: %s@%s", plugin.Name, plugin.Version)
 	}
 
 	return nil
@@ -83,155 +96,201 @@ func (r *Registry) Register(ctx context.Context, plugin *models.Plugin) error {
 
 // Unregister 注销插件
 func (r *Registry) Unregister(ctx context.Context, pluginID string) error {
-	filter := bson.M{"_id": pluginID}
-	update := bson.M{
-		"$set": bson.M{
-			"status":     models.PluginStatusInactive,
-			"updated_at": time.Now(),
-		},
-	}
-
-	_, err := r.mongo.Collection(CollectionName).UpdateOne(ctx, filter, update)
+	// 获取插件信息
+	plugin, err := r.Get(ctx, pluginID)
 	if err != nil {
-		return fmt.Errorf("failed to unregister plugin: %v", err)
+		return err
+	}
+	if plugin == nil {
+		return fmt.Errorf("plugin not found: %s", pluginID)
 	}
 
-	// 删除缓存
-	r.redis.Del(ctx, RedisKeyPrefix+pluginID)
-	r.redis.Del(ctx, RedisKeyPrefix+"name:"+pluginID)
+	// 更新状态为 inactive
+	plugin.Status = models.PluginStatusInactive
+	plugin.UpdatedAt = time.Now()
+
+	data, err := json.Marshal(plugin)
+	if err != nil {
+		return fmt.Errorf("failed to marshal plugin: %v", err)
+	}
+
+	if err := r.redis.Set(ctx, KeyPluginPrefix+pluginID, data, 0).Err(); err != nil {
+		return fmt.Errorf("failed to update plugin: %v", err)
+	}
+
+	// 从名称映射中删除
+	r.redis.Del(ctx, KeyPluginName+plugin.Name)
+
+	// 从列表中移除
+	r.redis.SRem(ctx, KeyPluginList, pluginID)
+
+	// 清理健康失败计数
+	r.redis.Del(ctx, KeyHealthFailCount+pluginID)
 
 	logx.Infof("Plugin unregistered: %s", pluginID)
 	return nil
 }
 
-// Get 获取插件
-func (r *Registry) Get(ctx context.Context, pluginID string) (*models.Plugin, error) {
-	// 先查缓存
-	cached, err := r.getCachedPlugin(ctx, pluginID)
-	if err == nil && cached != nil {
-		return cached, nil
+// Delete 彻底删除插件
+func (r *Registry) Delete(ctx context.Context, pluginID string) error {
+	plugin, err := r.Get(ctx, pluginID)
+	if err != nil {
+		return err
 	}
 
-	// 查数据库
-	filter := bson.M{"_id": pluginID}
-	var plugin models.Plugin
-	err = r.mongo.Collection(CollectionName).FindOne(ctx, filter).Decode(&plugin)
+	if plugin != nil {
+		r.redis.Del(ctx, KeyPluginName+plugin.Name)
+	}
+
+	r.redis.Del(ctx, KeyPluginPrefix+pluginID)
+	r.redis.SRem(ctx, KeyPluginList, pluginID)
+	r.redis.Del(ctx, KeyHealthFailCount+pluginID)
+
+	logx.Infof("Plugin deleted: %s", pluginID)
+	return nil
+}
+
+// Get 获取插件
+func (r *Registry) Get(ctx context.Context, pluginID string) (*models.Plugin, error) {
+	data, err := r.redis.Get(ctx, KeyPluginPrefix+pluginID).Bytes()
 	if err != nil {
-		if err == mongo.ErrNoDocuments {
+		if err == redis.Nil {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to get plugin: %v", err)
 	}
 
-	// 缓存
-	r.cachePlugin(ctx, &plugin)
+	var plugin models.Plugin
+	if err := json.Unmarshal(data, &plugin); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal plugin: %v", err)
+	}
 
 	return &plugin, nil
 }
 
 // GetByName 通过名称获取插件
 func (r *Registry) GetByName(ctx context.Context, name string) (*models.Plugin, error) {
-	filter := bson.M{"name": name, "status": models.PluginStatusActive}
-	opts := options.FindOne().SetSort(bson.M{"updated_at": -1})
-
-	var plugin models.Plugin
-	err := r.mongo.Collection(CollectionName).FindOne(ctx, filter, opts).Decode(&plugin)
-	if err != nil {
-		if err == mongo.ErrNoDocuments {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("failed to get plugin by name: %v", err)
-	}
-
-	return &plugin, nil
-}
-
-// List 列出插件
-func (r *Registry) List(ctx context.Context, keyword string, status string, page, limit int) ([]models.Plugin, int64, error) {
-	filter := bson.M{}
-	
-	if status != "" {
-		filter["status"] = status
-	}
-	
-	if keyword != "" {
-		filter["$or"] = []bson.M{
-			{"name": bson.M{"$regex": keyword, "$options": "i"}},
-			{"description": bson.M{"$regex": keyword, "$options": "i"}},
-		}
-	}
-
-	// 获取总数
-	total, err := r.mongo.Collection(CollectionName).CountDocuments(ctx, filter)
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to count plugins: %v", err)
-	}
-
-	// 分页查询
-	opts := options.Find().
-		SetSkip(int64((page - 1) * limit)).
-		SetLimit(int64(limit)).
-		SetSort(bson.M{"updated_at": -1})
-
-	cursor, err := r.mongo.Collection(CollectionName).Find(ctx, filter, opts)
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to list plugins: %v", err)
-	}
-	defer cursor.Close(ctx)
-
-	var plugins []models.Plugin
-	if err := cursor.All(ctx, &plugins); err != nil {
-		return nil, 0, fmt.Errorf("failed to decode plugins: %v", err)
-	}
-
-	return plugins, total, nil
-}
-
-// UpdateHealth 更新健康状态
-func (r *Registry) UpdateHealth(ctx context.Context, pluginID string, health models.PluginHealth) error {
-	filter := bson.M{"_id": pluginID}
-	update := bson.M{
-		"$set": bson.M{
-			"health":     health,
-			"last_seen":  time.Now(),
-			"updated_at": time.Now(),
-		},
-	}
-
-	_, err := r.mongo.Collection(CollectionName).UpdateOne(ctx, filter, update)
-	return err
-}
-
-// cachePlugin 缓存插件
-func (r *Registry) cachePlugin(ctx context.Context, plugin *models.Plugin) error {
-	data, err := json.Marshal(plugin)
-	if err != nil {
-		return err
-	}
-
-	// 缓存插件信息
-	if err := r.redis.Set(ctx, RedisKeyPrefix+plugin.ID, data, 5*time.Minute).Err(); err != nil {
-		return err
-	}
-
-	// 缓存名称映射
-	return r.redis.Set(ctx, RedisKeyPrefix+"name:"+plugin.Name, plugin.ID, 5*time.Minute).Err()
-}
-
-// getCachedPlugin 获取缓存的插件
-func (r *Registry) getCachedPlugin(ctx context.Context, pluginID string) (*models.Plugin, error) {
-	data, err := r.redis.Get(ctx, RedisKeyPrefix+pluginID).Bytes()
+	pluginID, err := r.redis.Get(ctx, KeyPluginName+name).Result()
 	if err != nil {
 		if err == redis.Nil {
 			return nil, nil
 		}
+		return nil, fmt.Errorf("failed to get plugin id by name: %v", err)
+	}
+
+	return r.Get(ctx, pluginID)
+}
+
+// List 列出插件
+func (r *Registry) List(ctx context.Context, keyword, status string, page, limit int) ([]models.Plugin, int64, error) {
+	// 获取所有插件 ID
+	ids, err := r.redis.SMembers(ctx, KeyPluginList).Result()
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to get plugin list: %v", err)
+	}
+
+	var plugins []models.Plugin
+	for _, id := range ids {
+		plugin, err := r.Get(ctx, id)
+		if err != nil {
+			continue
+		}
+		if plugin == nil {
+			continue
+		}
+
+		// 状态过滤
+		if status != "" && string(plugin.Status) != status {
+			continue
+		}
+
+		// 关键字过滤
+		if keyword != "" {
+			if !strings.Contains(strings.ToLower(plugin.Name), strings.ToLower(keyword)) &&
+				!strings.Contains(strings.ToLower(plugin.Description), strings.ToLower(keyword)) {
+				continue
+			}
+		}
+
+		plugins = append(plugins, *plugin)
+	}
+
+	total := int64(len(plugins))
+
+	// 分页
+	start := (page - 1) * limit
+	end := start + limit
+	if start > int(total) {
+		return []models.Plugin{}, total, nil
+	}
+	if end > int(total) {
+		end = int(total)
+	}
+
+	return plugins[start:end], total, nil
+}
+
+// UpdateHealth 更新健康状态
+func (r *Registry) UpdateHealth(ctx context.Context, pluginID string, health models.PluginHealth) error {
+	plugin, err := r.Get(ctx, pluginID)
+	if err != nil {
+		return err
+	}
+	if plugin == nil {
+		return fmt.Errorf("plugin not found: %s", pluginID)
+	}
+
+	plugin.Health = health
+	plugin.LastSeen = time.Now()
+	plugin.UpdatedAt = time.Now()
+
+	data, err := json.Marshal(plugin)
+	if err != nil {
+		return fmt.Errorf("failed to marshal plugin: %v", err)
+	}
+
+	return r.redis.Set(ctx, KeyPluginPrefix+pluginID, data, 0).Err()
+}
+
+// RecordHealthCheck 记录健康检查结果，返回是否需要清理
+func (r *Registry) RecordHealthCheck(ctx context.Context, pluginID string, isHealthy bool) (shouldRemove bool, err error) {
+	if isHealthy {
+		// 健康时重置失败计数
+		r.redis.Del(ctx, KeyHealthFailCount+pluginID)
+		return false, nil
+	}
+
+	// 不健康时增加失败计数
+	count, err := r.redis.Incr(ctx, KeyHealthFailCount+pluginID).Result()
+	if err != nil {
+		return false, err
+	}
+
+	// 设置过期时间（防止残留）
+	r.redis.Expire(ctx, KeyHealthFailCount+pluginID, 10*time.Minute)
+
+	logx.Warnf("Plugin %s health check failed, failure count: %d/%d", pluginID, count, MaxHealthFailures)
+
+	return count >= MaxHealthFailures, nil
+}
+
+// GetAllActivePlugins 获取所有活跃插件
+func (r *Registry) GetAllActivePlugins(ctx context.Context) ([]*models.Plugin, error) {
+	ids, err := r.redis.SMembers(ctx, KeyPluginList).Result()
+	if err != nil {
 		return nil, err
 	}
 
-	var plugin models.Plugin
-	if err := json.Unmarshal(data, &plugin); err != nil {
-		return nil, err
+	var plugins []*models.Plugin
+	for _, id := range ids {
+		plugin, err := r.Get(ctx, id)
+		if err != nil || plugin == nil {
+			continue
+		}
+		if plugin.Status == models.PluginStatusActive {
+			plugins = append(plugins, plugin)
+		}
 	}
 
-	return &plugin, nil
+	return plugins, nil
 }

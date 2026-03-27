@@ -6,13 +6,10 @@ import (
 	"time"
 
 	"plugin-platform/pkg/models"
-
-	"github.com/redis/go-redis/v9"
 )
 
 // Router 插件路由器
 type Router struct {
-	redis  *redis.Client
 	routes map[string]*RouteTable // pluginID -> route table
 	mu     sync.RWMutex
 }
@@ -26,15 +23,10 @@ type RouteTable struct {
 }
 
 // New 创建路由器
-func New(redisClient *redis.Client) *Router {
+func New() *Router {
 	r := &Router{
-		redis:  redisClient,
 		routes: make(map[string]*RouteTable),
 	}
-
-	// 启动清理任务
-	go r.cleanupLoop()
-
 	return r
 }
 
@@ -102,19 +94,12 @@ func (r *Router) GetAllRoutes() map[string]*RouteTable {
 	return result
 }
 
-// cleanupLoop 清理过期路由
-func (r *Router) cleanupLoop() {
-	ticker := time.NewTicker(5 * time.Minute)
-	defer ticker.Stop()
+// UpdateTimestamp 更新路由时间戳
+func (r *Router) UpdateTimestamp(pluginID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
-	for range ticker.C {
-		r.mu.Lock()
-		now := time.Now()
-		for id, route := range r.routes {
-			if now.Sub(route.UpdatedAt) > 10*time.Minute {
-				delete(r.routes, id)
-			}
-		}
-		r.mu.Unlock()
+	if route, exists := r.routes[pluginID]; exists {
+		route.UpdatedAt = time.Now()
 	}
 }
