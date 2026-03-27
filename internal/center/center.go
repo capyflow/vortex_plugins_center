@@ -182,24 +182,36 @@ func (pc *PluginCenter) HealthCheck(ctx context.Context, pluginID string) (*mode
 	return &health, nil
 }
 
-// callPlugin 调用插件
+// callPlugin 调用插件（使用标准协议）
 func (pc *PluginCenter) callPlugin(ctx context.Context, endpoint, path string, params map[string]interface{}) (interface{}, error) {
-	url := endpoint + path
+	url := endpoint + "/invoke"
 
-	var body io.Reader
-	if params != nil {
-		data, err := json.Marshal(params)
-		if err != nil {
-			return nil, err
-		}
-		body = bytes.NewReader(data)
+	// 构建标准请求
+	requestID := fmt.Sprintf("req-%d", time.Now().UnixNano())
+	reqBody := map[string]interface{}{
+		"request_id":  requestID,
+		"method":      extractMethodFromPath(path),
+		"timestamp":   time.Now().UnixMilli(),
+		"params":      params,
+		"context":     map[string]string{},
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", url, body)
+	data, err := json.Marshal(reqBody)
 	if err != nil {
 		return nil, err
 	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+
+	// 设置标准 Headers
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Request-ID", requestID)
+	req.Header.Set("X-Plugin-Name", "unknown") // 需要从上层传入
+	req.Header.Set("X-Method", extractMethodFromPath(path))
+	req.Header.Set("X-Timestamp", fmt.Sprintf("%d", time.Now().UnixMilli()))
 	req.Header.Set("X-Plugin-Platform", "v1.0")
 
 	resp, err := pc.client.Do(req)
@@ -208,16 +220,21 @@ func (pc *PluginCenter) callPlugin(ctx context.Context, endpoint, path string, p
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("plugin returned status %d", resp.StatusCode)
-	}
-
 	var result map[string]interface{}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %v", err)
 	}
 
 	return result, nil
+}
+
+// extractMethodFromPath 从路径提取方法名
+func extractMethodFromPath(path string) string {
+	// /add -> add
+	if len(path) > 0 && path[0] == '/' {
+		return path[1:]
+	}
+	return path
 }
 
 // healthCheck 健康检查
