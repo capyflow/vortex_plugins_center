@@ -15,21 +15,21 @@ import (
 func main() {
 	// 插件配置
 	port := "8001"
-	platformURL := "http://localhost:8080/api/v1/plugins/register"
+	platformURL := "http://localhost:19090/v1/api/plugins/register"
 
 	// 启动 HTTP 服务
 	go func() {
 		mux := http.NewServeMux()
-		
+
 		// 健康检查端点
 		mux.HandleFunc("/health", handleHealth)
-		
+
 		// 计算方法
 		mux.HandleFunc("/add", handleAdd)
 		mux.HandleFunc("/sub", handleSub)
 		mux.HandleFunc("/mul", handleMul)
 		mux.HandleFunc("/div", handleDiv)
-		
+
 		log.Printf("Calculator plugin starting on port %s", port)
 		if err := http.ListenAndServe(":"+port, mux); err != nil {
 			log.Fatalf("Failed to start server: %v", err)

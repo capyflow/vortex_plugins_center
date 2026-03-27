@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"flag"
-	"fmt"
 
 	"plugin-platform/conf"
 	"plugin-platform/internal/center"
@@ -11,8 +10,9 @@ import (
 	"plugin-platform/internal/registry"
 	"plugin-platform/internal/router"
 
+	"github.com/capyflow/allspark-go/ds"
 	"github.com/capyflow/allspark-go/logx"
-	"github.com/redis/go-redis/v9"
+	"github.com/capyflow/allspark-go/system"
 )
 
 func main() {
@@ -24,11 +24,15 @@ func main() {
 	// 加载配置
 	cfg := conf.LoadConfig(*configPath)
 
-	// 初始化 Redis 客户端
-	redisClient := initRedis(cfg)
-
+	dsServer := ds.InitDatabaseServer(ctx, cfg.DBConfig, func(dbIdxs map[string]interface{}) {
+		dbIdxs["registry"] = 1
+	})
+	rdb, ok := dsServer.GetRedis("registry")
+	if !ok {
+		panic("Failed to get Redis client for registry")
+	}
 	// 初始化核心组件
-	reg := registry.New(redisClient)
+	reg := registry.New(rdb)
 	rt := router.New()
 	pc := center.New(reg, rt)
 
@@ -47,23 +51,8 @@ func main() {
 	if err := gw.Start(ctx, port); err != nil {
 		logx.Fatalf("Failed to start gateway: %v", err)
 	}
-}
 
-// initRedis 初始化 Redis 客户端
-func initRedis(cfg *conf.CenterConfig) *redis.Client {
-	rdb := redis.NewClient(&redis.Options{
-		Addr:     fmt.Sprintf("%s:%d", cfg.DBConfig.Redis.Host, cfg.DBConfig.Redis.Port),
-		Username: cfg.DBConfig.Redis.Username,
-		Password: cfg.DBConfig.Redis.Password,
-		DB:       0,
+	system.GracefulShutdown(func(ctx context.Context) error {
+		return nil
 	})
-
-	// 测试连接
-	ctx := context.Background()
-	if err := rdb.Ping(ctx).Err(); err != nil {
-		panic(fmt.Sprintf("Failed to connect to Redis: %v", err))
-	}
-
-	logx.Infof("Connected to Redis at %s:%d", cfg.DBConfig.Redis.Host, cfg.DBConfig.Redis.Port)
-	return rdb
 }

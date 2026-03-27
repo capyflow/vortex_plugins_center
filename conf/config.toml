@@ -1,7 +1,7 @@
 port=19090
 
 [dbConfig.redis]
-host = "localhost"
+host = "127.0.0.1"
 port = 6379
 username = ""
-password = ""
+password = "1433223qQ"

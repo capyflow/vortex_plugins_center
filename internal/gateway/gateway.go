@@ -10,6 +10,7 @@ import (
 	vortex "github.com/capyflow/vortexv3"
 	vpkg "github.com/capyflow/vortexv3/pkg"
 	vhttp "github.com/capyflow/vortexv3/server/http"
+	"github.com/gin-gonic/gin"
 )
 
 // Gateway API 网关
@@ -27,19 +28,45 @@ func New(pc *center.PluginCenter) *Gateway {
 // Start 启动网关
 func (g *Gateway) Start(ctx context.Context, port int) error {
 	root := vhttp.NewRootGroup("/v1/api")
+
+	// 添加全局 OPTIONS 路由处理 CORS 预检
+	root.AddRouter([]string{http.MethodOptions}, "/*path", func(ctx *vhttp.Context) error {
+		c := ctx.GinContext()
+		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		c.Writer.Header().Set("Access-Control-Max-Age", "86400")
+		c.AbortWithStatus(http.StatusNoContent)
+		return nil
+	})
+
 	g.registerRoutes(root)
+
 	// 创建 Vortex HTTP 引擎
 	e := vortex.NewVortexEngine(ctx,
 		vortex.WithEnableProtocol([]string{vpkg.HTTP}),
 		vortex.WithPort(port),
 		vortex.WithHttpRouterRootGroup(root),
+		vortex.WithHttpServerOptions(func(e *gin.Engine) {
+			e.Use(func(c *gin.Context) {
+				c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+				c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+				c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+				c.Writer.Header().Set("Access-Control-Max-Age", "86400")
+
+				if c.Request.Method == "OPTIONS" {
+					c.AbortWithStatus(http.StatusNoContent)
+					return
+				}
+				c.Next()
+			})
+		}),
 	)
 	// 启动服务
 	e.Start()
 	return nil
 }
 
-// registerRoutes 注册路由
 // 注意：路由按注册顺序匹配，所以 /list 必须在 /:id 之前注册
 func (g *Gateway) registerRoutes(root *vhttp.VortexHttpRouterGroup) {
 	// 插件管理 - 按特异性排序（最具体的路由先注册）
