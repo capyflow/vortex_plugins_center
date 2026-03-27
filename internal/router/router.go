@@ -1,7 +1,6 @@
 package router
 
 import (
-	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -13,9 +12,9 @@ import (
 
 // Router 插件路由器
 type Router struct {
-	redis    *redis.Client
-	routes   map[string]*RouteTable // pluginID -> route table
-	mu       sync.RWMutex
+	redis  *redis.Client
+	routes map[string]*RouteTable // pluginID -> route table
+	mu     sync.RWMutex
 }
 
 // RouteTable 路由表
@@ -32,10 +31,10 @@ func New(redisClient *redis.Client) *Router {
 		redis:  redisClient,
 		routes: make(map[string]*RouteTable),
 	}
-	
+
 	// 启动清理任务
 	go r.cleanupLoop()
-	
+
 	return r
 }
 
@@ -63,7 +62,7 @@ func (r *Router) Register(plugin *models.Plugin) error {
 func (r *Router) Unregister(pluginID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	
+
 	delete(r.routes, pluginID)
 }
 

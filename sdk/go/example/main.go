@@ -6,8 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-
-	"github.com/capyflow/vortex_plugins_center/sdk/go"
+	plugin "plugin-platform/sdk/go"
 )
 
 func main() {
@@ -204,7 +203,7 @@ func startServer() {
 		}
 		// 简化处理，实际应该解析表达式
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"result":    42,
+			"result":     42,
 			"expression": req.Expression,
 		})
 	})

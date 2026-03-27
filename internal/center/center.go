@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"time"
 
@@ -108,7 +107,7 @@ func (pc *PluginCenter) Execute(ctx context.Context, pluginID, methodName string
 
 	// 调用插件
 	result, err := pc.callPlugin(ctx, endpoint, path, params)
-	
+
 	latency := time.Since(start).Milliseconds()
 
 	// 更新健康状态
@@ -189,11 +188,11 @@ func (pc *PluginCenter) callPlugin(ctx context.Context, endpoint, path string, p
 	// 构建标准请求
 	requestID := fmt.Sprintf("req-%d", time.Now().UnixNano())
 	reqBody := map[string]interface{}{
-		"request_id":  requestID,
-		"method":      extractMethodFromPath(path),
-		"timestamp":   time.Now().UnixMilli(),
-		"params":      params,
-		"context":     map[string]string{},
+		"request_id": requestID,
+		"method":     extractMethodFromPath(path),
+		"timestamp":  time.Now().UnixMilli(),
+		"params":     params,
+		"context":    map[string]string{},
 	}
 
 	data, err := json.Marshal(reqBody)
