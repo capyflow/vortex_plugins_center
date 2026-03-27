@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Plugin Center - 插件中心</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            color: #fff;
+        }
+        .header {
+            background: rgba(0,0,0,0.3);
+            padding: 20px 40px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        .header h1 {
+            font-size: 24px;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .container { max-width: 1400px; margin: 0 auto; padding: 40px; }
+        .plugin-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+        }
+        .plugin-card {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 12px;
+            padding: 20px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .plugin-card:hover {
+            background: rgba(255,255,255,0.1);
+            transform: translateY(-4px);
+            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.3);
+        }
+        .plugin-card.active {
+            border-color: #667eea;
+            background: rgba(102, 126, 234, 0.1);
+        }
+        .plugin-header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px; }
+        .plugin-name { font-size: 18px; font-weight: 600; }
+        .plugin-version {
+            font-size: 12px; color: #667eea; background: rgba(102, 126, 234, 0.2);
+            padding: 2px 8px; border-radius: 12px;
+        }
+        .plugin-desc { font-size: 14px; color: #aaa; margin-bottom: 12px; }
+        .plugin-meta { display: flex; gap: 15px; font-size: 12px; color: #888; }
+        .status-badge { padding: 4px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+        .status-active { background: rgba(46, 213, 115, 0.2); color: #2ed573; }
+        .plugin-panel {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 12px;
+            padding: 30px;
+            margin-top: 30px;
+            display: none;
+        }
+        .plugin-panel.show { display: block; }
+        .panel-header {
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 30px; padding-bottom: 20px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        .panel-title { font-size: 24px; font-weight: 600; }
+        .close-btn {
+            background: rgba(255,255,255,0.1); border: none; color: #fff;
+            padding: 8px 16px; border-radius: 8px; cursor: pointer;
+        }
+        .method-item {
+            background: rgba(0,0,0,0.2); border-radius: 10px;
+            padding: 20px; margin-bottom: 20px;
+        }
+        .method-header { display: flex; justify-content: space-between; margin-bottom: 15px; }
+        .method-name { font-size: 16px; font-weight: 600; color: #667eea; }
+        .params-form { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px; margin: 15px 0; }
+        .param-field { display: flex; flex-direction: column; gap: 5px; }
+        .param-field label { font-size: 12px; color: #888; }
+        .param-field input {
+            padding: 10px 12px; background: rgba(255,255,255,0.1);
+            border: 1px solid rgba(255,255,255,0.2); border-radius: 6px;
+            color: #fff; font-size: 14px;
+        }
+        .execute-btn {
+            padding: 10px 24px; background: linear-gradient(135deg, #667eea, #764ba2);
+            border: none; border-radius: 8px; color: #fff;
+            font-size: 14px; font-weight: 600; cursor: pointer;
+        }
+        .result-box {
+            background: rgba(0,0,0,0.3); border-radius: 8px;
+            padding: 15px; margin-top: 15px; min-height: 60px;
+            font-family: monospace; font-size: 13px;
+        }
+        .result-success { color: #2ed573; }
+        .result-error { color: #ff4757; }
+        .loading { display: inline-block; width: 20px; height: 20px; border: 2px solid #667eea; border-radius: 50%; border-top-color: transparent; animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🔌 Plugin Center</h1>
+        <div id="stats">加载中...</div>
+    </div>
+    
+    <div class="container">
+        <div id="pluginList" class="plugin-grid"></div>
+        <div id="pluginPanel" class="plugin-panel"></div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8080/api/v1';
+        let plugins = [];
+        let currentPlugin = null;
+
+        // 加载插件列表
+        async function loadPlugins() {
+            try {
+                const res = await fetch(`${API_BASE}/plugins/list`);
+                const data = await res.json();
+                if (data.body) {
+                    plugins = data.body.plugins || [];
+                    renderPlugins();
+                    updateStats();
+                }
+            } catch (err) {
+                console.error('Failed to load plugins:', err);
+                document.getElementById('pluginList').innerHTML = '<div style="color:#ff4757">加载失败，请检查服务是否运行</div>';
+            }
+        }
+
+        // 渲染插件列表
+        function renderPlugins() {
+            const container = document.getElementById('pluginList');
+            if (plugins.length === 0) {
+                container.innerHTML = '<div style="color:#888;text-align:center;padding:40px">暂无插件</div>';
+                return;
+            }
+            
+            container.innerHTML = plugins.map(p => `
+                <div class="plugin-card ${currentPlugin?.id === p.id ? 'active' : ''}" onclick="selectPlugin('${p.id}')">
+                    <div class="plugin-header">
+                        <div class="plugin-name">${p.name}</div>
+                        <span class="plugin-version">${p.version}</span>
+                    </div>
+                    <div class="plugin-desc">${p.description || '暂无描述'}</div>
+                    <div class="plugin-meta">
+                        <span class="status-badge status-${p.status}">${p.status}</span>
+                        <span>${p.methods?.length || 0} 个方法</span>
+                        <span>延迟: ${p.health?.latency || 0}ms</span>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // 选择插件
+        function selectPlugin(id) {
+            currentPlugin = plugins.find(p => p.id === id);
+            renderPlugins();
+            renderPluginPanel();
+        }
+
+        // 渲染插件详情面板
+        function renderPluginPanel() {
+            const panel = document.getElementById('pluginPanel');
+            if (!currentPlugin) {
+                panel.classList.remove('show');
+                return;
+            }
+            
+            panel.innerHTML = `
+                <div class="panel-header">
+                    <div>
+                        <div class="panel-title">${currentPlugin.name}</div>
+                        <div style="color:#888;font-size:14px;margin-top:5px">${currentPlugin.description || ''}</div>
+                    </div>
+                    <button class="close-btn" onclick="closePanel()">关闭</button>
+                </div>
+                <div class="methods-list">
+                    ${currentPlugin.methods?.map(m => renderMethod(m)).join('') || '<div style="color:#888">暂无方法</div>'}
+                </div>
+            `;
+            panel.classList.add('show');
+        }
+
+        // 渲染方法
+        function renderMethod(method) {
+            const paramInputs = method.parameters?.map(p => `
+                <div class="param-field">
+                    <label>${p.name}${p.required ? ' <span style="color:#ff4757">*</span>' : ''}</label>
+                    <input type="text" id="param-${method.name}-${p.name}" placeholder="${p.type}${p.default ? ' (默认: ' + p.default + ')' : ''}">
+                </div>
+            `).join('') || '';
+            
+            return `
+                <div class="method-item">
+                    <div class="method-header">
+                        <div class="method-name">${method.name}</div>
+                        <span style="color:#888;font-size:12px">${method.method} ${method.path}</span>
+                    </div>
+                    <div style="color:#aaa;font-size:14px;margin-bottom:15px">${method.description || ''}</div>
+                    <div class="params-form">${paramInputs}</div>
+                    <button class="execute-btn" onclick="executeMethod('${method.name}')">执行</button>
+                    <div id="result-${method.name}" class="result-box" style="display:none"></div>
+                </div>
+            `;
+        }
+
+        // 执行方法
+        async function executeMethod(methodName) {
+            const resultBox = document.getElementById(`result-${methodName}`);
+            const method = currentPlugin.methods.find(m => m.name === methodName);
+            
+            // 收集参数
+            const params = {};
+            method.parameters?.forEach(p => {
+                const value = document.getElementById(`param-${methodName}-${p.name}`)?.value;
+                if (value) {
+                    params[p.name] = p.type === 'number' ? parseFloat(value) : value;
+                }
+            });
+            
+            resultBox.style.display = 'block';
+            resultBox.innerHTML = '<div class="loading"></div>';
+            
+            try {
+                const res = await fetch(`${API_BASE}/plugins/${currentPlugin.id}/execute/${methodName}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(params)
+                });
+                const data = await res.json();
+                
+                if (data.body?.success) {
+                    resultBox.innerHTML = `<div class="result-success">✓ 成功 (${data.body.latency}ms)</div><pre>${JSON.stringify(data.body.result, null, 2)}</pre>`;
+                } else {
+                    resultBox.innerHTML = `<div class="result-error">✗ 失败: ${data.body?.error || '未知错误'}</div>`;
+                }
+            } catch (err) {
+                resultBox.innerHTML = `<div class="result-error">✗ 请求失败: ${err.message}</div>`;
+            }
+        }
+
+        // 关闭面板
+        function closePanel() {
+            currentPlugin = null;
+            document.getElementById('pluginPanel').classList.remove('show');
+            renderPlugins();
+        }
+
+        // 更新统计
+        function updateStats() {
+            const active = plugins.filter(p => p.status === 'active').length;
+            document.getElementById('stats').innerHTML = `
+                <span>总插件: ${plugins.length}</span>
+                <span style="color:#2ed573">运行中: ${active}</span>
+            `;
+        }
+
+        // 初始化
+        loadPlugins();
+        // 定时刷新
+        setInterval(loadPlugins, 30000);
+    </script>
+</body>
+</html>
