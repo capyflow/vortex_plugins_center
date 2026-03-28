@@ -1,144 +1,338 @@
 <template>
-  <div
-    class="plugin-card"
-    :class="{ inactive: plugin.status === 'inactive' }"
-    @click="emit('click')"
-  >
-    <div class="card-header">
+  <div class="plugin-card" :class="{ 'is-active': plugin.status === 'active', 'is-error': plugin.status === 'error' }">
+    <div class="plugin-header">
+      <div class="plugin-icon">
+        <span class="icon">🔌</span>
+      </div>
       <div class="plugin-info">
         <h3 class="plugin-name">{{ plugin.name }}</h3>
-        <el-tag size="small" type="info" class="version-tag">{{ plugin.version }}</el-tag>
+        <span class="plugin-version">v{{ plugin.version }}</span>
       </div>
-      <HealthIndicator :status="plugin.health?.status" />
+      <div class="plugin-status" :class="plugin.status">
+        <span class="status-dot"></span>
+        {{ statusText }}
+      </div>
     </div>
-    
-    <p class="plugin-desc">{{ plugin.description || '暂无描述' }}</p>
-    
-    <div class="card-footer">
-      <div class="meta-info">
-        <el-tag size="small" :type="statusType">{{ statusText }}</el-tag>
-        <span class="method-count">{{ plugin.methods?.length || 0 }} 个方法</span>
+
+    <p v-if="plugin.summary" class="plugin-summary">{{ plugin.summary }}</p>
+
+    <div class="plugin-meta">
+      <div class="meta-item">
+        <span class="meta-label">输出类型:</span>
+        <span class="meta-value">{{ plugin.outputs || 'unknown' }}</span>
       </div>
-      <div v-if="plugin.health?.latency" class="latency">
-        <el-icon><Timer /></el-icon>
-        <span>{{ plugin.health.latency }}ms</span>
+      <div v-if="plugin.health" class="meta-item">
+        <span class="meta-label">延迟:</span>
+        <span class="meta-value" :class="getLatencyClass(plugin.health.latency)">
+          {{ plugin.health.latency }}ms
+        </span>
       </div>
+      <div class="meta-item">
+        <span class="meta-label">参数:</span>
+        <span class="meta-value">{{ paramCount }} 个</span>
+      </div>
+    </div>
+
+    <div class="plugin-params-preview" v-if="paramCount > 0">
+      <div class="params-tags">
+        <span
+          v-for="(def, name) in plugin.params"
+          :key="name"
+          class="param-tag"
+          :class="`type-${def.type}`"
+        >
+          {{ name }}: {{ def.type }}
+          <span v-if="def.required" class="required-mark">*</span>
+        </span>
+      </div>
+    </div>
+
+    <div class="plugin-actions">
+      <button class="btn btn-primary" @click="$emit('execute', plugin)">
+        <span class="btn-icon">▶</span>
+        执行
+      </button>
+      <button class="btn btn-secondary" @click="$emit('detail', plugin)">
+        详情
+      </button>
+      <button
+        v-if="plugin.status === 'active'"
+        class="btn btn-danger"
+        @click="$emit('unregister', plugin)"
+      >
+        注销
+      </button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Timer } from '@element-plus/icons-vue'
 import type { Plugin } from '@/types/plugin'
-import HealthIndicator from './HealthIndicator.vue'
 
-const props = defineProps<{
+interface Props {
   plugin: Plugin
-}>()
+}
 
-const emit = defineEmits<{
-  click: []
+const props = defineProps<Props>()
+defineEmits<{
+  execute: [plugin: Plugin]
+  detail: [plugin: Plugin]
+  unregister: [plugin: Plugin]
 }>()
-
-const statusType = computed(() => {
-  switch (props.plugin.status) {
-    case 'active': return 'success'
-    case 'inactive': return 'info'
-    case 'error': return 'danger'
-    default: return 'info'
-  }
-})
 
 const statusText = computed(() => {
-  switch (props.plugin.status) {
-    case 'active': return '运行中'
-    case 'inactive': return '已停止'
-    case 'error': return '异常'
-    default: return '未知'
+  const map: Record<string, string> = {
+    active: '运行中',
+    inactive: '已停止',
+    error: '异常',
   }
+  return map[props.plugin.status] || props.plugin.status
 })
+
+const paramCount = computed(() => {
+  return Object.keys(props.plugin.params || {}).length
+})
+
+function getLatencyClass(latency: number): string {
+  if (latency < 50) return 'latency-good'
+  if (latency < 200) return 'latency-normal'
+  return 'latency-slow'
+}
 </script>
 
 <style scoped>
 .plugin-card {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--bg-secondary);
   border-radius: 12px;
   padding: 20px;
-  cursor: pointer;
-  transition: all 0.3s;
+  border: 2px solid transparent;
+  transition: all 0.3s ease;
 }
 
 .plugin-card:hover {
-  background: rgba(255, 255, 255, 0.1);
-  transform: translateY(-4px);
-  box-shadow: 0 10px 30px rgba(102, 126, 234, 0.3);
+  border-color: var(--primary-color);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
 
-.plugin-card.inactive {
-  opacity: 0.6;
+.plugin-card.is-error {
+  border-color: #ef4444;
 }
 
-.card-header {
+.plugin-header {
   display: flex;
-  justify-content: space-between;
-  align-items: start;
+  align-items: center;
+  gap: 12px;
   margin-bottom: 12px;
 }
 
-.plugin-info {
+.plugin-icon {
+  width: 48px;
+  height: 48px;
+  background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+  border-radius: 12px;
   display: flex;
   align-items: center;
-  gap: 10px;
+  justify-content: center;
+  font-size: 24px;
+}
+
+.plugin-info {
+  flex: 1;
 }
 
 .plugin-name {
   font-size: 18px;
   font-weight: 600;
-  color: #fff;
   margin: 0;
+  color: var(--text-primary);
 }
 
-.version-tag {
-  background: rgba(102, 126, 234, 0.2) !important;
-  color: #667eea !important;
-  border: none !important;
-}
-
-.plugin-desc {
-  font-size: 14px;
-  color: #aaa;
-  margin: 0 0 16px 0;
-  line-height: 1.5;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.card-footer {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.meta-info {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-}
-
-.method-count {
+.plugin-version {
   font-size: 12px;
-  color: #888;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  padding: 2px 8px;
+  border-radius: 4px;
 }
 
-.latency {
+.plugin-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  background: var(--bg-tertiary);
+}
+
+.plugin-status.active {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.plugin-status.inactive {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.plugin-status.error {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.plugin-summary {
+  color: var(--text-secondary);
+  font-size: 14px;
+  margin: 0 0 12px 0;
+  line-height: 1.5;
+}
+
+.plugin-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 12px;
+  padding: 12px;
+  background: var(--bg-tertiary);
+  border-radius: 8px;
+}
+
+.meta-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.meta-label {
+  color: var(--text-secondary);
+}
+
+.meta-value {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.latency-good {
+  color: #16a34a;
+}
+
+.latency-normal {
+  color: #ca8a04;
+}
+
+.latency-slow {
+  color: #dc2626;
+}
+
+.plugin-params-preview {
+  margin-bottom: 16px;
+}
+
+.params-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.param-tag {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+.param-tag.type-string {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.param-tag.type-number {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.param-tag.type-file {
+  background: #fce7f3;
+  color: #9d174d;
+}
+
+.param-tag.type-boolean {
+  background: #f3e8ff;
+  color: #6b21a8;
+}
+
+.param-tag.type-select {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.required-mark {
+  color: #ef4444;
+  font-weight: bold;
+}
+
+.plugin-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.btn {
+  flex: 1;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.btn-primary {
+  background: var(--primary-color);
+  color: white;
+}
+
+.btn-primary:hover {
+  background: var(--primary-hover);
+}
+
+.btn-secondary {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.btn-secondary:hover {
+  background: var(--border-color);
+}
+
+.btn-danger {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.btn-danger:hover {
+  background: #fecaca;
+}
+
+.btn-icon {
   font-size: 12px;
-  color: #2ed573;
 }
 </style>

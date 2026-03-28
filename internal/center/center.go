@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -42,12 +43,13 @@ func (pc *PluginCenter) RegisterPlugin(ctx context.Context, req *models.Register
 
 	// 创建插件对象
 	plugin := &models.Plugin{
-		Name:        req.Name,
-		Version:     req.Version,
-		Description: req.Description,
-		Endpoint:    req.Endpoint,
-		Methods:     req.Methods,
-		Metadata:    req.Metadata,
+		Name:     req.Name,
+		Version:  req.Version,
+		Endpoint: req.Endpoint,
+		Summary:  req.Summary,
+		Params:   req.Params,
+		Outputs:  req.Outputs,
+		Metadata: req.Metadata,
 		Health: models.PluginHealth{
 			Status:    "healthy",
 			Latency:   0,
@@ -81,8 +83,8 @@ func (pc *PluginCenter) UnregisterPlugin(ctx context.Context, pluginID string) e
 	return nil
 }
 
-// Execute 执行插件方法
-func (pc *PluginCenter) Execute(ctx context.Context, pluginID, methodName string, params map[string]interface{}) (*models.ExecuteResponse, error) {
+// Execute 执行插件
+func (pc *PluginCenter) Execute(ctx context.Context, pluginID string, params map[string]interface{}) (*models.ExecuteResponse, error) {
 	start := time.Now()
 
 	// 获取插件信息
@@ -99,14 +101,8 @@ func (pc *PluginCenter) Execute(ctx context.Context, pluginID, methodName string
 		return nil, fmt.Errorf("plugin is not active: %s", plugin.Status)
 	}
 
-	// 路由到方法
-	endpoint, path, err := pc.router.Route(pluginID, methodName)
-	if err != nil {
-		return nil, err
-	}
-
-	// 调用插件
-	result, err := pc.callPlugin(ctx, plugin.Name, endpoint, path, params)
+	// 调用插件（简化后：直接调用插件的 execute 端点）
+	result, err := pc.callPlugin(ctx, plugin.Endpoint, "/execute", params)
 
 	latency := time.Since(start).Milliseconds()
 
@@ -154,7 +150,7 @@ func (pc *PluginCenter) GetPlugin(ctx context.Context, pluginID string) (*models
 	return pc.registry.Get(ctx, pluginID)
 }
 
-// HealthCheck 健康检查（用于外部 API 调用）
+// HealthCheck 健康检查
 func (pc *PluginCenter) HealthCheck(ctx context.Context, pluginID string) (*models.PluginHealth, error) {
 	plugin, err := pc.registry.Get(ctx, pluginID)
 	if err != nil {
@@ -181,100 +177,24 @@ func (pc *PluginCenter) HealthCheck(ctx context.Context, pluginID string) (*mode
 	return &health, nil
 }
 
-// StartHealthCheckLoop 启动健康检查循环（每分钟检查一次，3次失败清理插件）
-func (pc *PluginCenter) StartHealthCheckLoop() {
-	go func() {
-		ticker := time.NewTicker(1 * time.Minute)
-		defer ticker.Stop()
+// callPlugin 调用插件
+func (pc *PluginCenter) callPlugin(ctx context.Context, endpoint, path string, params map[string]interface{}) (interface{}, error) {
+	url := endpoint + path
 
-		for range ticker.C {
-			ctx := context.Background()
-
-			// 获取所有活跃插件
-			plugins, err := pc.registry.GetAllActivePlugins(ctx)
-			if err != nil {
-				logx.Errorf("Failed to get plugins for health check: %v", err)
-				continue
-			}
-
-			for _, plugin := range plugins {
-				isHealthy := pc.checkPluginHealth(ctx, plugin)
-
-				// 记录健康检查结果
-				shouldRemove, err := pc.registry.RecordHealthCheck(ctx, plugin.ID, isHealthy)
-				if err != nil {
-					logx.Errorf("Failed to record health check for %s: %v", plugin.ID, err)
-					continue
-				}
-
-				// 如果连续 3 次失败，清理插件
-				if shouldRemove {
-					logx.Warnf("Plugin %s (%s) failed health check 3 times, removing...", plugin.Name, plugin.ID)
-					if err := pc.UnregisterPlugin(ctx, plugin.ID); err != nil {
-						logx.Errorf("Failed to unregister unhealthy plugin %s: %v", plugin.ID, err)
-					} else {
-						logx.Infof("Plugin %s removed due to health check failures", plugin.ID)
-					}
-				}
-			}
+	var body io.Reader
+	if params != nil {
+		data, err := json.Marshal(params)
+		if err != nil {
+			return nil, err
 		}
-	}()
-}
-
-// checkPluginHealth 检查单个插件健康状态
-func (pc *PluginCenter) checkPluginHealth(ctx context.Context, plugin *models.Plugin) bool {
-	start := time.Now()
-	err := pc.healthCheck(ctx, plugin.Endpoint)
-	latency := time.Since(start).Milliseconds()
-
-	health := models.PluginHealth{
-		Status:    "healthy",
-		Latency:   latency,
-		CheckedAt: time.Now(),
-	}
-	if err != nil {
-		health.Status = "unhealthy"
-		logx.Warnf("Health check failed for plugin %s (%s): %v", plugin.Name, plugin.Endpoint, err)
+		body = bytes.NewReader(data)
 	}
 
-	// 更新健康状态
-	if err := pc.registry.UpdateHealth(ctx, plugin.ID, health); err != nil {
-		logx.Errorf("Failed to update health for %s: %v", plugin.ID, err)
-	}
-
-	return err == nil
-}
-
-// callPlugin 调用插件（使用标准协议）
-func (pc *PluginCenter) callPlugin(ctx context.Context, pluginName, endpoint, path string, params map[string]interface{}) (interface{}, error) {
-	url := endpoint + "/invoke"
-
-	// 构建标准请求
-	requestID := fmt.Sprintf("req-%d", time.Now().UnixNano())
-	reqBody := map[string]interface{}{
-		"request_id": requestID,
-		"method":     extractMethodFromPath(path),
-		"timestamp":  time.Now().UnixMilli(),
-		"params":     params,
-		"context":    map[string]string{},
-	}
-
-	data, err := json.Marshal(reqBody)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, body)
 	if err != nil {
 		return nil, err
 	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(data))
-	if err != nil {
-		return nil, err
-	}
-
-	// 设置标准 Headers
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Request-ID", requestID)
-	req.Header.Set("X-Plugin-Name", pluginName)
-	req.Header.Set("X-Method", extractMethodFromPath(path))
-	req.Header.Set("X-Timestamp", fmt.Sprintf("%d", time.Now().UnixMilli()))
 	req.Header.Set("X-Plugin-Platform", "v1.0")
 
 	resp, err := pc.client.Do(req)
@@ -283,34 +203,16 @@ func (pc *PluginCenter) callPlugin(ctx context.Context, pluginName, endpoint, pa
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("plugin returned status %d", resp.StatusCode)
+	}
+
 	var result map[string]interface{}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %v", err)
 	}
 
-	// 检查插件返回的 success 字段
-	if success, ok := result["success"].(bool); ok && !success {
-		errorMsg := "plugin execution failed"
-		if errMsg, ok := result["error"].(string); ok {
-			errorMsg = errMsg
-		} else if errObj, ok := result["error"].(map[string]interface{}); ok {
-			if msg, ok := errObj["message"].(string); ok {
-				errorMsg = msg
-			}
-		}
-		return nil, fmt.Errorf("%s", errorMsg)
-	}
-
 	return result, nil
-}
-
-// extractMethodFromPath 从路径提取方法名
-func extractMethodFromPath(path string) string {
-	// /add -> add
-	if len(path) > 0 && path[0] == '/' {
-		return path[1:]
-	}
-	return path
 }
 
 // healthCheck 健康检查
@@ -333,4 +235,26 @@ func (pc *PluginCenter) healthCheck(ctx context.Context, endpoint string) error 
 	}
 
 	return nil
+}
+
+// StartHealthCheckLoop 启动健康检查循环
+func (pc *PluginCenter) StartHealthCheckLoop() {
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+
+		for range ticker.C {
+			ctx := context.Background()
+			// 获取所有活跃插件
+			plugins, _, err := pc.registry.List(ctx, "", string(models.PluginStatusActive), 1, 1000)
+			if err != nil {
+				logx.Errorf("Failed to list plugins for health check: %v", err)
+				continue
+			}
+
+			for _, plugin := range plugins {
+				pc.HealthCheck(ctx, plugin.ID)
+			}
+		}
+	}()
 }

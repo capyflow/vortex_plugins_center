@@ -4,44 +4,41 @@ import (
 	"time"
 )
 
-// Plugin 插件定义
+// Plugin 插件定义（简化版）
 type Plugin struct {
-	ID          string            `json:"id" bson:"_id"`
-	Name        string            `json:"name" bson:"name"`
-	Version     string            `json:"version" bson:"version"`
-	Description string            `json:"description" bson:"description"`
-	Endpoint    string            `json:"endpoint" bson:"endpoint"` // HTTP 端点
-	Methods     []PluginMethod    `json:"methods" bson:"methods"`
-	Metadata    map[string]string `json:"metadata" bson:"metadata"`
-	Status      PluginStatus      `json:"status" bson:"status"`
-	Health      PluginHealth      `json:"health" bson:"health"`
-	CreatedAt   time.Time         `json:"created_at" bson:"created_at"`
-	UpdatedAt   time.Time         `json:"updated_at" bson:"updated_at"`
-	LastSeen    time.Time         `json:"last_seen" bson:"last_seen"`
+	ID          string              `json:"id" bson:"_id"`
+	Name        string              `json:"name" bson:"name"`
+	Version     string              `json:"version" bson:"version"`
+	Endpoint    string              `json:"endpoint" bson:"endpoint"` // HTTP 端点
+	Summary     string              `json:"summary" bson:"summary"`
+	Params      map[string]ParamDef `json:"params" bson:"params"`
+	Outputs     string              `json:"outputs" bson:"outputs"`
+	Metadata    map[string]string   `json:"metadata" bson:"metadata"`
+	Status      PluginStatus        `json:"status" bson:"status"`
+	Health      PluginHealth        `json:"health" bson:"health"`
+	CreatedAt   time.Time           `json:"created_at" bson:"created_at"`
+	UpdatedAt   time.Time           `json:"updated_at" bson:"updated_at"`
+	LastSeen    time.Time           `json:"last_seen" bson:"last_seen"`
 }
 
-// PluginMethod 插件方法定义
-type PluginMethod struct {
-	Name        string            `json:"name" bson:"name"`
-	Description string            `json:"description" bson:"description"`
-	Path        string            `json:"path" bson:"path"` // HTTP 路径
-	Method      string            `json:"method" bson:"method"` // GET/POST/PUT/DELETE
-	Parameters  []Parameter       `json:"parameters" bson:"parameters"`
-	Returns     ReturnType        `json:"returns" bson:"returns"`
-}
+// ParamDef 参数定义
+type ParamDef struct {
+	Type        string   `json:"type" bson:"type"` // string/number/file/select/boolean/textarea/password/date/object/array
+	Required    bool     `json:"required,omitempty" bson:"required,omitempty"`
+	Default     any      `json:"default,omitempty" bson:"default,omitempty"`
+	Description string   `json:"description,omitempty" bson:"description,omitempty"`
 
-// Parameter 参数定义
-type Parameter struct {
-	Name     string `json:"name" bson:"name"`
-	Type     string `json:"type" bson:"type"`
-	Required bool   `json:"required" bson:"required"`
-	Default  string `json:"default" bson:"default"`
-}
-
-// ReturnType 返回类型
-type ReturnType struct {
-	Type        string `json:"type" bson:"type"`
-	Description string `json:"description" bson:"description"`
+	// 类型特定属性
+	MaxLength   int      `json:"maxLength,omitempty" bson:"maxLength,omitempty"`   // string/textarea
+	Min         float64  `json:"min,omitempty" bson:"min,omitempty"`             // number
+	Max         float64  `json:"max,omitempty" bson:"max,omitempty"`             // number
+	Step        float64  `json:"step,omitempty" bson:"step,omitempty"`           // number
+	Accept      string   `json:"accept,omitempty" bson:"accept,omitempty"`       // file: ".jpg,.png"
+	Multiple    bool     `json:"multiple,omitempty" bson:"multiple,omitempty"`   // file/select
+	MaxSize     int64    `json:"maxSize,omitempty" bson:"maxSize,omitempty"`     // file: bytes
+	Options     []string `json:"options,omitempty" bson:"options,omitempty"`     // select
+	Rows        int      `json:"rows,omitempty" bson:"rows,omitempty"`           // textarea
+	Placeholder string   `json:"placeholder,omitempty" bson:"placeholder,omitempty"` // string/textarea
 }
 
 // PluginStatus 插件状态
@@ -60,14 +57,15 @@ type PluginHealth struct {
 	CheckedAt time.Time `json:"checked_at" bson:"checked_at"`
 }
 
-// RegisterRequest 插件注册请求
+// RegisterRequest 插件注册请求（简化版）
 type RegisterRequest struct {
-	Name        string            `json:"name" validate:"required"`
-	Version     string            `json:"version" validate:"required"`
-	Description string            `json:"description"`
-	Endpoint    string            `json:"endpoint" validate:"required,url"`
-	Methods     []PluginMethod    `json:"methods" validate:"required,min=1"`
-	Metadata    map[string]string `json:"metadata"`
+	Name     string              `json:"name" validate:"required"`
+	Version  string              `json:"version" validate:"required"`
+	Endpoint string              `json:"endpoint" validate:"required,url"`
+	Summary  string              `json:"summary,omitempty"`
+	Params   map[string]ParamDef `json:"params,omitempty"`
+	Outputs  string              `json:"outputs,omitempty"`
+	Metadata map[string]string   `json:"metadata,omitempty"`
 }
 
 // RegisterResponse 插件注册响应
@@ -79,8 +77,7 @@ type RegisterResponse struct {
 
 // ExecuteRequest 执行请求
 type ExecuteRequest struct {
-	PluginID string            `json:"plugin_id" validate:"required"`
-	Method   string            `json:"method" validate:"required"`
+	PluginID string                 `json:"plugin_id" validate:"required"`
 	Params   map[string]interface{} `json:"params"`
 }
 

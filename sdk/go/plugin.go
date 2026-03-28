@@ -1,4 +1,5 @@
-package plugin
+// Package sdk 提供插件开发 SDK
+package sdk
 
 import (
 	"bytes"
@@ -9,178 +10,161 @@ import (
 	"time"
 )
 
-// Plugin SDK 提供插件注册和管理功能
+// Plugin SDK 插件基础结构
+type Plugin struct {
+	Name     string
+	Version  string
+	Endpoint string
+	Summary  string
+	Params   map[string]ParamDef
+	Outputs  string
+	Metadata map[string]string
 
-type SDK struct {
 	platformURL string
 	client      *http.Client
-	info        *PluginInfo
 }
 
-// PluginInfo 插件信息
-type PluginInfo struct {
-	ID          string            `json:"id"`
-	Name        string            `json:"name"`
-	Version     string            `json:"version"`
-	Description string            `json:"description"`
-	Endpoint    string            `json:"endpoint"`
-	Methods     []Method          `json:"methods"`
-	Metadata    map[string]string `json:"metadata"`
-	DocURL      string            `json:"doc_url"`
+// ParamDef 参数定义
+type ParamDef struct {
+	Type        string   `json:"type"`
+	Required    bool     `json:"required,omitempty"`
+	Default     any      `json:"default,omitempty"`
+	Description string   `json:"description,omitempty"`
+	MaxLength   int      `json:"maxLength,omitempty"`
+	Min         float64  `json:"min,omitempty"`
+	Max         float64  `json:"max,omitempty"`
+	Step        float64  `json:"step,omitempty"`
+	Accept      string   `json:"accept,omitempty"`
+	Multiple    bool     `json:"multiple,omitempty"`
+	MaxSize     int64    `json:"maxSize,omitempty"`
+	Options     []string `json:"options,omitempty"`
+	Rows        int      `json:"rows,omitempty"`
+	Placeholder string   `json:"placeholder,omitempty"`
 }
 
-// Method 方法定义
-type Method struct {
-	Name        string      `json:"name"`
-	Description string      `json:"description"`
-	Path        string      `json:"path"`
-	HTTPMethod  string      `json:"http_method"`
-	Parameters  []Parameter `json:"parameters"`
-	Returns     ReturnInfo  `json:"returns"`
-}
-
-// Parameter 参数定义
-type Parameter struct {
-	Name        string `json:"name"`
-	Type        string `json:"type"` // string, number, boolean, object, array
-	Required    bool   `json:"required"`
-	Default     string `json:"default,omitempty"`
-	Description string `json:"description,omitempty"`
-}
-
-// ReturnInfo 返回信息
-type ReturnInfo struct {
-	Type        string `json:"type"`
-	Description string `json:"description"`
-}
-
-// RegisterOptions 注册选项
-type RegisterOptions struct {
-	PlatformURL string // 平台地址，如 http://localhost:8080
-	Name        string // 插件名称
-	Version     string // 版本号
-	Description string // 插件描述
-	Endpoint    string // 插件HTTP端点
-	DocURL      string // 文档地址
-}
-
-// MethodOptions 方法选项
-type MethodOptions struct {
-	Name        string
-	Description string
-	Path        string
-	HTTPMethod  string // GET, POST, PUT, DELETE
-}
-
-// New 创建 SDK 实例
-func New(opts RegisterOptions) *SDK {
-	return &SDK{
-		platformURL: opts.PlatformURL,
+// NewPlugin 创建新插件
+func NewPlugin(name, version string) *Plugin {
+	return &Plugin{
+		Name:     name,
+		Version:  version,
+		Params:   make(map[string]ParamDef),
+		Metadata: make(map[string]string),
 		client: &http.Client{
-			Timeout: 10 * time.Second,
-		},
-		info: &PluginInfo{
-			Name:        opts.Name,
-			Version:     opts.Version,
-			Description: opts.Description,
-			Endpoint:    opts.Endpoint,
-			DocURL:      opts.DocURL,
-			Methods:     []Method{},
-			Metadata:    make(map[string]string),
+			Timeout: 30 * time.Second,
 		},
 	}
 }
 
-// AddMethod 添加方法
-func (s *SDK) AddMethod(opts MethodOptions, params []Parameter, returns ReturnInfo) *SDK {
-	method := Method{
-		Name:        opts.Name,
-		Description: opts.Description,
-		Path:        opts.Path,
-		HTTPMethod:  opts.HTTPMethod,
-		Parameters:  params,
-		Returns:     returns,
-	}
-	s.info.Methods = append(s.info.Methods, method)
-	return s
+// SetEndpoint 设置端点
+func (p *Plugin) SetEndpoint(endpoint string) *Plugin {
+	p.Endpoint = endpoint
+	return p
+}
+
+// SetSummary 设置描述
+func (p *Plugin) SetSummary(summary string) *Plugin {
+	p.Summary = summary
+	return p
+}
+
+// SetOutputs 设置输出类型
+func (p *Plugin) SetOutputs(outputs string) *Plugin {
+	p.Outputs = outputs
+	return p
+}
+
+// AddParam 添加参数
+func (p *Plugin) AddParam(name string, def ParamDef) *Plugin {
+	p.Params[name] = def
+	return p
 }
 
 // AddStringParam 添加字符串参数
-func StringParam(name, description string, required bool) Parameter {
-	return Parameter{
-		Name:        name,
-		Type:        "string",
-		Required:    required,
-		Description: description,
-	}
+func (p *Plugin) AddStringParam(name string, required bool) *Plugin {
+	return p.AddParam(name, ParamDef{Type: "string", Required: required})
 }
 
 // AddNumberParam 添加数字参数
-func NumberParam(name, description string, required bool) Parameter {
-	return Parameter{
-		Name:        name,
-		Type:        "number",
-		Required:    required,
-		Description: description,
-	}
+func (p *Plugin) AddNumberParam(name string, required bool) *Plugin {
+	return p.AddParam(name, ParamDef{Type: "number", Required: required})
 }
 
-// AddBoolParam 添加布尔参数
-func BoolParam(name, description string, required bool) Parameter {
-	return Parameter{
-		Name:        name,
-		Type:        "boolean",
-		Required:    required,
-		Description: description,
-	}
+// AddFileParam 添加文件参数
+func (p *Plugin) AddFileParam(name string, required bool, accept string) *Plugin {
+	return p.AddParam(name, ParamDef{
+		Type:     "file",
+		Required: required,
+		Accept:   accept,
+	})
 }
 
-// AddObjectParam 添加对象参数
-func ObjectParam(name, description string, required bool) Parameter {
-	return Parameter{
-		Name:        name,
-		Type:        "object",
-		Required:    required,
-		Description: description,
-	}
+// AddSelectParam 添加选择参数
+func (p *Plugin) AddSelectParam(name string, options []string, defaultVal string) *Plugin {
+	return p.AddParam(name, ParamDef{
+		Type:    "select",
+		Options: options,
+		Default: defaultVal,
+	})
 }
 
-// AddArrayParam 添加数组参数
-func ArrayParam(name, description string, required bool) Parameter {
-	return Parameter{
-		Name:        name,
-		Type:        "array",
-		Required:    required,
-		Description: description,
-	}
+// AddBooleanParam 添加布尔参数
+func (p *Plugin) AddBooleanParam(name string, defaultVal bool) *Plugin {
+	return p.AddParam(name, ParamDef{
+		Type:    "boolean",
+		Default: defaultVal,
+	})
 }
 
 // SetMetadata 设置元数据
-func (s *SDK) SetMetadata(key, value string) *SDK {
-	s.info.Metadata[key] = value
-	return s
+func (p *Plugin) SetMetadata(key, value string) *Plugin {
+	p.Metadata[key] = value
+	return p
+}
+
+// RegisterRequest 注册请求结构
+type RegisterRequest struct {
+	Name     string            `json:"name"`
+	Version  string            `json:"version"`
+	Endpoint string            `json:"endpoint"`
+	Summary  string            `json:"summary,omitempty"`
+	Params   map[string]ParamDef `json:"params,omitempty"`
+	Outputs  string            `json:"outputs,omitempty"`
+	Metadata map[string]string `json:"metadata,omitempty"`
+}
+
+// RegisterResponse 注册响应结构
+type RegisterResponse struct {
+	ID      string `json:"id"`
+	Status  string `json:"status"`
+	Message string `json:"message"`
 }
 
 // Register 注册到平台
-func (s *SDK) Register(ctx context.Context) (*RegisterResponse, error) {
-	if len(s.info.Methods) == 0 {
-		return nil, fmt.Errorf("at least one method is required")
+func (p *Plugin) Register(ctx context.Context, platformURL string) (*RegisterResponse, error) {
+	p.platformURL = platformURL
+
+	reqBody := RegisterRequest{
+		Name:     p.Name,
+		Version:  p.Version,
+		Endpoint: p.Endpoint,
+		Summary:  p.Summary,
+		Params:   p.Params,
+		Outputs:  p.Outputs,
+		Metadata: p.Metadata,
 	}
 
-	url := s.platformURL + "/api/v1/plugins/register"
-	
-	jsonData, err := json.Marshal(s.info)
+	jsonData, err := json.Marshal(reqBody)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal plugin info: %v", err)
+		return nil, fmt.Errorf("failed to marshal request: %v", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
+	req, err := http.NewRequestWithContext(ctx, "POST", platformURL+"/api/v1/plugins/register", bytes.NewBuffer(jsonData))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := s.client.Do(req)
+	resp, err := p.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to register: %v", err)
 	}
@@ -192,47 +176,45 @@ func (s *SDK) Register(ctx context.Context) (*RegisterResponse, error) {
 
 	var result RegisterResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to decode response: %v", err)
 	}
 
-	s.info.ID = result.ID
 	return &result, nil
 }
 
-// Unregister 从平台注销
-func (s *SDK) Unregister(ctx context.Context) error {
-	if s.info.ID == "" {
-		return fmt.Errorf("plugin not registered")
-	}
+// Handler 插件处理器接口
+type Handler func(ctx context.Context, params map[string]interface{}) (interface{}, error)
 
-	url := fmt.Sprintf("%s/api/v1/plugins/%s", s.platformURL, s.info.ID)
-	
-	req, err := http.NewRequestWithContext(ctx, "DELETE", url, nil)
-	if err != nil {
-		return err
-	}
+// Serve 启动 HTTP 服务
+func (p *Plugin) Serve(port string, handler Handler) error {
+	mux := http.NewServeMux()
 
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
+	// 健康检查
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]string{"status": "healthy"})
+	})
 
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unregister failed with status %d", resp.StatusCode)
-	}
+	// 执行端点
+	mux.HandleFunc("/execute", func(w http.ResponseWriter, r *http.Request) {
+		var params map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 
-	return nil
-}
+		result, err := handler(r.Context(), params)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": err.Error(),
+			})
+			return
+		}
 
-// GetInfo 获取插件信息
-func (s *SDK) GetInfo() *PluginInfo {
-	return s.info
-}
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"result": result,
+		})
+	})
 
-// RegisterResponse 注册响应
-type RegisterResponse struct {
-	ID      string `json:"id"`
-	Status  string `json:"status"`
-	Message string `json:"message"`
+	return http.ListenAndServe("+"+port, mux)
 }

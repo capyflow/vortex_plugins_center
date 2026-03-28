@@ -1,75 +1,95 @@
+/**
+ * 插件平台类型定义
+ */
+
 // 参数定义
-export interface Parameter {
-  name: string
-  type: 'string' | 'number' | 'boolean' | 'object' | 'array'
-  required: boolean
-  default?: string
-  description?: string
-}
-
-// 返回类型
-export interface ReturnType {
+export interface ParamDef {
   type: string
-  description: string
+  required?: boolean
+  default?: any
+  description?: string
+  // 类型特定属性
+  maxLength?: number
+  min?: number
+  max?: number
+  step?: number
+  accept?: string
+  multiple?: boolean
+  maxSize?: number
+  options?: string[]
+  rows?: number
+  placeholder?: string
 }
 
-// 插件方法
-export interface Method {
-  name: string
-  description: string
-  path: string
-  method: string
-  parameters?: Parameter[]
-  returns?: ReturnType
-}
-
-// 插件健康状态
-export interface PluginHealth {
-  status: 'healthy' | 'unhealthy'
-  latency: number
-  checked_at: string
-}
-
-// 插件状态
-export type PluginStatus = 'active' | 'inactive' | 'error'
-
-// 插件定义
+// 插件信息
 export interface Plugin {
   id: string
   name: string
   version: string
-  description: string
   endpoint: string
-  methods: Method[]
-  metadata: Record<string, string>
-  status: PluginStatus
-  health: PluginHealth
+  summary?: string
+  params?: Record<string, ParamDef>
+  outputs?: string
+  metadata?: Record<string, string>
+  status: 'active' | 'inactive' | 'error'
+  health?: {
+    status: string
+    latency: number
+    checked_at: string
+  }
   created_at: string
   updated_at: string
-  last_seen: string
 }
 
-// 插件列表响应
-export interface PluginListResponse {
-  total: number
-  plugins: Plugin[]
+// 注册请求
+export interface RegisterPluginRequest {
+  name: string
+  version: string
+  endpoint: string
+  summary?: string
+  params?: Record<string, ParamDef>
+  outputs?: string
+  metadata?: Record<string, string>
+}
+
+// 执行请求
+export interface ExecutePluginRequest {
+  plugin_id: string
+  params?: Record<string, any>
 }
 
 // 执行响应
-export interface ExecuteResponse {
+export interface ExecutePluginResponse {
   success: boolean
-  result: any
+  result?: any
   error?: string
   latency: number
 }
 
-// 调用历史记录
-export interface CallHistory {
-  id: string
-  pluginId: string
-  pluginName: string
-  methodName: string
-  params: Record<string, any>
-  response: ExecuteResponse
-  timestamp: number
+// 支持的参数类型
+export const PARAM_TYPES = [
+  { value: 'string', label: '文本', icon: 'text' },
+  { value: 'number', label: '数字', icon: 'hash' },
+  { value: 'file', label: '文件', icon: 'upload' },
+  { value: 'boolean', label: '开关', icon: 'toggle' },
+  { value: 'select', label: '选择', icon: 'list' },
+  { value: 'textarea', label: '多行文本', icon: 'align-left' },
+  { value: 'password', label: '密码', icon: 'lock' },
+  { value: 'date', label: '日期', icon: 'calendar' },
+  { value: 'object', label: '对象', icon: 'code' },
+  { value: 'array', label: '数组', icon: 'list-ordered' },
+] as const
+
+// 参数类型对应的默认配置
+export const PARAM_TYPE_DEFAULTS: Record<string, Partial<ParamDef>> = {
+  string: { required: true },
+  number: { required: true, min: 0 },
+  file: { required: true, accept: '*' },
+  boolean: { default: false },
+  select: { options: [] },
+  textarea: { required: true, rows: 3 },
+  password: { required: true },
+  date: { required: true },
+  object: { required: true },
+  array: { required: true },
 }
